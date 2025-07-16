@@ -1,7 +1,16 @@
 """
-Сериализаторы преобразуют данные моделей User, Coords,
-Image и Pereval в формат, удобный для API. Сериализаторы обрабатывают
-всю необходимую информацию, включая данные пользователя, координаты перевала и изображения.
+Сериализаторы преобразуют данные моделей в формат, удобный для REST API,
+и обратно — для сохранения в базу данных.
+
+- UserSerializer: сериализует пользователя, создаёт нового при необходимости (по email).
+- CoordsSerializer: сериализует координаты перевала.
+- ImageSerializer: сериализует изображения перевала (название и ссылка).
+- AddedSerializer: сериализует перевал с вложенными данными (user, coords, images),
+  создаёт связанные объекты.
+- InfoSerializer: используется для отображения полной информации о перевале (GET).
+- CoordsUpdateSerializer: для частичного обновления координат.
+- PerevalUpdateSerializer: для обновления перевала (если статус = 'new');
+  обновляет поля, координаты и изображения.
 """
 from .models import *
 from rest_framework import serializers
@@ -86,3 +95,50 @@ class InfoSerializer(serializers.ModelSerializer):
             'level_winter', 'level_summer', 'level_autumn', 'level_spring',
             'images'
         ]
+class CoordsUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Coords
+        fields = ['latitude', 'longitude', 'height']
+
+class PerevalUpdateSerializer(serializers.ModelSerializer):
+    coords = CoordsUpdateSerializer()
+    images = ImageSerializer(many=True)
+
+    class Meta:
+        model = Pereval
+        fields = [
+            'beauty_title', 'title', 'other_titles', 'connect', 'add_time',
+            'level_winter', 'level_summer', 'level_autumn', 'level_spring',
+            'status', 'coords', 'images'
+        ]
+
+    def update(self, instance, validated_data):
+        # Извлекаем вложенные данные
+        coords_data = validated_data.pop('coords', None)
+        images_data = validated_data.pop('images', None)
+
+        # Обновление простых полей
+        instance.beauty_title = validated_data.get('beauty_title', instance.beauty_title)
+        instance.title = validated_data.get('title', instance.title)
+        instance.other_titles = validated_data.get('other_titles', instance.other_titles)
+        instance.connect = validated_data.get('connect', instance.connect)
+        instance.add_time = validated_data.get('add_time', instance.add_time)
+        instance.level_winter = validated_data.get('level_winter', instance.level_winter)
+        instance.level_summer = validated_data.get('level_summer', instance.level_summer)
+        instance.level_autumn = validated_data.get('level_autumn', instance.level_autumn)
+        instance.level_spring = validated_data.get('level_spring', instance.level_spring)
+        instance.save()
+
+        # Обновление координат
+        if coords_data:
+            coords_serializer = CoordsUpdateSerializer(instance.coords, data=coords_data, partial=True)
+            if coords_serializer.is_valid(raise_exception=True):
+                coords_serializer.save()
+
+        # Обновление изображений: удалить старые и добавить новые
+        if images_data:
+            instance.images.all().delete()
+            for img in images_data:
+                Image.objects.create(pereval=instance, **img)
+
+        return instance
